@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Combat Bets — Minecraft</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-900 text-gray-100 min-h-screen">
+  <div class="max-w-5xl mx-auto p-6">
+    <header class="flex items-center justify-between mb-6">
+      <h1 class="text-2xl font-bold">Combat Bets</h1>
+      <div id="user-area" class="flex items-center gap-4"></div>
+    </header>
+
+    <main class="grid grid-cols-3 gap-6">
+      <section class="col-span-2">
+        <div class="flex items-center gap-4 mb-4">
+          <input id="filter" placeholder="Rechercher un joueur..." class="flex-1 p-2 rounded bg-gray-800"/>
+          <button id="btn-create" class="px-4 py-2 rounded bg-green-600">Créer combat</button>
+          <button id="btn-refresh" class="px-4 py-2 rounded bg-blue-600">Actualiser</button>
+        </div>
+        <div id="combats" class="space-y-4"></div>
+      </section>
+
+      <aside class="bg-gray-800 p-4 rounded">
+        <h2 class="font-semibold mb-2">Comment fonctionne</h2>
+        <ol class="list-decimal list-inside text-sm space-y-1">
+          <li>Crée un combat entre 2 pseudos.</li>
+          <li>Les joueurs misent sur celui qu'ils pensent gagner (on ne peut pas parier sur soi).</li>
+          <li>Colle le message de mort Minecraft en preuve.</li>
+          <li>Le site détecte automatiquement le joueur mort et paie les gagnants (2× la mise).</li>
+        </ol>
+      </aside>
+    </main>
+  </div>
+
+  <!-- Modals and templates -->
+  <div id="modal-root"></div>
+
+<script>
+const api = (path, opts) => fetch(path, Object.assign({ headers:{'Content-Type':'application/json'}}, opts))
+  .then(r => r.json());
+
+async function me(){ const r = await api('/api/me'); return r.user; }
+
+function el(html){ const div = document.createElement('div'); div.innerHTML = html.trim(); return div.firstChild; }
+
+function showModal(contentHtml){ const root = document.getElementById('modal-root'); root.innerHTML = ''; const modal = el(`
+  <div class="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
+    <div class="bg-gray-900 rounded p-6 w-full max-w-xl">${contentHtml}</div>
+  </div>`);
+  root.appendChild(modal);
+  modal.addEventListener('click', e=>{ if(e.target===modal) root.innerHTML=''; });
+}
+
+async function renderUserArea(){ const u = await me(); const area = document.getElementById('user-area'); area.innerHTML=''; if(u){ area.innerHTML = `
+  <div class="text-sm">Connecté : <strong>${u.username}</strong> (<span id="credits">${u.credits}</span> pts)</div>
+  <button id="btn-logout" class="px-3 py-1 bg-red-600 rounded">Déconnexion</button>`;
+  document.getElementById('btn-logout').onclick = async ()=>{ await api('/api/logout',{method:'POST'}); renderUserArea(); loadCombats(); };
+ } else {
+   area.innerHTML = `
+     <button id="btn-login" class="px-3 py-1 bg-blue-600 rounded">Connexion</button>
+     <button id="btn-register" class="px-3 py-1 bg-green-600 rounded">Inscription</button>`;
+   document.getElementById('btn-login').onclick = ()=> showLogin();
+   document.getElementById('btn-register').onclick = ()=> showRegister();
+ }
+}
+
+function showLogin(){ showModal(`
+  <h3 class="text-lg font-semibold mb-3">Connexion</h3>
+  <input id="li-username" placeholder="Pseudo" class="w-full p-2 mb-2 bg-gray-800 rounded"/><br/>
+  <input id="li-password" type="password" placeholder="Mot de passe" class="w-full p-2 mb-4 bg-gray-800 rounded"/><br/>
+  <div class="flex gap-2 justify-end">
+    <button id="li-submit" class="px-4 py-2 bg-blue-600 rounded">Se connecter</button>
+  </div>`);
+  document.getElementById('li-submit').onclick = async ()=>{
+    const username = document.getElementById('li-username').value;
+    const password = document.getElementById('li-password').value;
+    const r = await api('/api/login',{method:'POST', body: JSON.stringify({username,password})});
+    if(r.ok){ showModal('<div class="p-4">Connecté ✓</div>'); renderUserArea(); loadCombats(); setTimeout(()=>document.getElementById('modal-root').innerHTML='',800); }
+    else alert('Échec connexion');
+  };
+}
+
+function showRegister(){ showModal(`
+  <h3 class="text-lg font-semibold mb-3">Inscription</h3>
+  <input id="rg-username" placeholder="Pseudo" class="w-full p-2 mb-2 bg-gray-800 rounded"/><br/>
+  <input id="rg-password" type="password" placeholder="Mot de passe" class="w-full p-2 mb-4 bg-gray-800 rounded"/><br/>
+  <div class="flex gap-2 justify-end">
+    <button id="rg-submit" class="px-4 py-2 bg-green-600 rounded">S'inscrire</button>
+  </div>`);
+  document.getElementById('rg-submit').onclick = async ()=>{
+    const username = document.getElementById('rg-username').value;
+    const password = document.getElementById('rg-password').value;
+    const r = await api('/api/register',{method:'POST', body: JSON.stringify({username,password})});
+    if(r.ok){ renderUserArea(); loadCombats(); document.getElementById('modal-root').innerHTML=''; }
+    else alert('Erreur inscription');
+  };
+}
+
+function showCreateCombat(){ showModal(`
+  <h3 class="text-lg font-semibold mb-3">Créer un combat</h3>
+  <input id="c-playerA" placeholder="Joueur A" class="w-full p-2 mb-2 bg-gray-800 rounded"/><br/>
+  <input id="c-playerB" placeholder="Joueur B" class="w-full p-2 mb-4 bg-gray-800 rounded"/><br/>
+  <div class="flex gap-2 justify-end">
+    <button id="c-submit" class="px-4 py-2 bg-green-600 rounded">Créer</button>
+  </div>`);
+  document.getElementById('c-submit').onclick = async ()=>{
+    const playerA = document.getElementById('c-playerA').value;
+    const playerB = document.getElementById('c-playerB').value;
+    const r = await api('/api/combat/create',{method:'POST', body: JSON.stringify({playerA,playerB})});
+    if(r.ok){ document.getElementById('modal-root').innerHTML=''; loadCombats(); }
+    else alert('Erreur création');
+  };
+}
+
+async function loadCombats(){ const r = await api('/api/combats'); const arr = r.combats || []; const container = document.getElementById('combats'); container.innerHTML=''; arr.forEach(c=>{
+  const card = document.createElement('div');
+  card.className = 'p-4 rounded bg-gray-800 flex justify-between items-center';
+  card.innerHTML = `<div>
+    <div class="font-semibold">${c.playerA} <span class="text-sm text-gray-400">vs</span> ${c.playerB}</div>
+    <div class="text-xs text-gray-400">Statut: ${c.status}${c.winner?(' — Gagnant: '+c.winner):''}</div>
+  </div>
+  <div class="flex gap-2 items-center">
+    <button class="px-3 py-1 bg-indigo-600 rounded btn-bet" data-id="${c.id}" data-a="${c.playerA}" data-b="${c.playerB}">Parier</button>
+    <button class="px-3 py-1 bg-yellow-600 rounded btn-proof" data-id="${c.id}">Soumettre preuve</button>
+    <button class="px-3 py-1 bg-gray-700 rounded btn-bets" data-id="${c.id}">Voir paris</button>
+  </div>`;
+  container.appendChild(card);
+ });
+ // attach events
+ document.querySelectorAll('.btn-bet').forEach(b=> b.onclick = (e)=> showBet(e.currentTarget.dataset));
+ document.querySelectorAll('.btn-proof').forEach(b=> b.onclick = (e)=> showProof(e.currentTarget.dataset.id));
+ document.querySelectorAll('.btn-bets').forEach(b=> b.onclick = (e)=> showBets(e.currentTarget.dataset.id));
+ // update credits if logged
+ const u = await me();
+ if(u) document.getElementById('credits').innerText = u.credits;
+}
+
+function showBet(data){ showModal(`
+  <h3 class="text-lg font-semibold mb-3">Parier</h3>
+  <div class="mb-2">Combat: <strong>${data.a}</strong> vs <strong>${data.b}</strong></div>
+  <select id="bet-choice" class="w-full p-2 mb-2 bg-gray-800 rounded"><option value="${data.a}">${data.a}</option><option value="${data.b}">${data.b}</option></select>
+  <input id="bet-amt" type="number" placeholder="Montant" class="w-full p-2 mb-4 bg-gray-800 rounded"/>
+  <div class="flex justify-end"><button id="bet-submit" class="px-4 py-2 bg-indigo-600 rounded">Parier</button></div>`);
+  document.getElementById('bet-submit').onclick = async ()=>{
+    const choice = document.getElementById('bet-choice').value;
+    const amount = Number(document.getElementById('bet-amt').value);
+    const r = await api('/api/bet',{method:'POST', body: JSON.stringify({combatId:data.id, choice, amount})});
+    if(r.ok){ alert('Pari placé'); document.getElementById('modal-root').innerHTML=''; loadCombats(); renderUserArea(); }
+    else alert('Erreur: ' + (r.error||''));
+  };
+}
+
+function showProof(combatId){ showModal(`
+  <h3 class="text-lg font-semibold mb-3">Soumettre preuve (message de mort)</h3>
+  <textarea id="proof-txt" rows="6" class="w-full p-2 mb-4 bg-gray-800 rounded" placeholder="Coller le message de mort du serveur..."></textarea>
+  <div class="flex justify-end"><button id="proof-submit" class="px-4 py-2 bg-yellow-600 rounded">Soumettre</button></div>`);
+  document.getElementById('proof-submit').onclick = async ()=>{
+    const deathMessage = document.getElementById('proof-txt').value;
+    const r = await api('/api/combat/proof',{method:'POST', body: JSON.stringify({combatId, deathMessage})});
+    if(r.ok){ alert('Combat clos. Gagnant: ' + r.winner); document.getElementById('modal-root').innerHTML=''; loadCombats(); renderUserArea(); }
+    else alert('Erreur: ' + (r.error||''));
+  };
+}
+
+async function showBets(combatId){
+  const r = await api('/api/combats/'+combatId+'/bets');
+  const bets = r.bets || [];
+  let html = `<h3 class="text-lg font-semibold mb-3">Paris (${bets.length})</h3><div class="space-y-2">`;
+  bets.forEach(b=> html += `<div class="p-2 bg-gray-900 rounded"><strong>${b.bettor||b.user_id}</strong> → ${b.choice} : ${b.amount} pts</div>`);
+  html += '</div><div class="flex justify-end mt-4"><button id="b-close" class="px-3 py-1 bg-gray-700 rounded">Fermer</button></div>';
+  showModal(html);
+  document.getElementById('b-close').onclick = ()=> document.getElementById('modal-root').innerHTML='';
+}
+
+document.getElementById('btn-create').onclick = showCreateCombat;
+document.getElementById('btn-refresh').onclick = loadCombats;
+document.getElementById('filter').addEventListener('input', ()=>{ /* could filter list client-side */ });
+
+// init
+renderUserArea();
+loadCombats();
+</script>
+</body>
+</html>
